@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSpring, animated } from '@react-spring/web';
-import { Code2, X, Check, Loader2 } from 'lucide-react';
+import { Code2, X, Check, Loader2, Github, Link } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { User } from '../types';
 
@@ -23,31 +23,66 @@ export default function Home() {
     try {
       setLoading(true);
       const { data: session } = await supabase.auth.getSession();
+      
       if (!session?.session?.user) {
         navigate('/auth');
         return;
       }
 
-      // Get all matches for the current user
-      const { data: matches } = await supabase
-        .from('matches')
-        .select('user2_id')
-        .eq('user1_id', session.session.user.id);
-
-      const matchedUserIds = matches?.map(m => m.user2_id) || [];
-
-      // Get next profile excluding matched users and current user
-      const { data: profiles } = await supabase
-        .from('profiles')
+      // Check if swipes table exists
+      const { error: tableError } = await supabase
+        .from('swipes')
         .select('*')
-        .neq('id', session.session.user.id)
-        .not('id', 'in', `(${matchedUserIds.map(id => `'${id}'`).join(',') || 'null'})`)
-        .limit(1)
-        .single();
+        .limit(1);
 
-      setCurrentProfile(profiles);
+      if (tableError) {
+        console.error('Swipes table error:', tableError);
+        throw new Error('Database configuration missing - contact support');
+      }
+
+      // Get swipes with error handling
+      const { data: swipes, error: swipesError } = await supabase
+        .from('swipes')
+        .select('target_id')
+        .eq('swiper_id', session.session.user.id);
+
+      if (swipesError) {
+        console.error('Swipes query error:', swipesError);
+        throw swipesError;
+      }
+
+      const excludedIds = [
+        session.session.user.id,
+        ...(swipes?.map(s => s.target_id) || [])
+      ];
+
+      // Explicitly select required fields
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select(`
+          id,
+          full_name,
+          avatar_url,
+          bio,
+          skills,
+          github_url,
+          portfolio_url,
+          experience_level
+        `)
+        .not('id', 'in', `(${excludedIds.join(',')})`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (profileError) {
+        console.error('Profile query error:', profileError);
+        throw profileError;
+      }
+      
+      setCurrentProfile(profile || null);
     } catch (error) {
       console.error('Error loading profile:', error);
+      setCurrentProfile(null);
     } finally {
       setLoading(false);
     }
@@ -62,15 +97,24 @@ export default function Home() {
       onRest: loadNextProfile,
     });
 
-    if (direction === 'right') {
+    try {
       const { data: session } = await supabase.auth.getSession();
       if (!session?.session?.user) return;
 
-      await supabase.from('matches').insert({
-        user1_id: session.session.user.id,
-        user2_id: currentProfile.id,
-        status: 'pending',
+      // Insert swipe with error handling
+      const { error } = await supabase.from('swipes').insert({
+        swiper_id: session.session.user.id,
+        target_id: currentProfile.id,
+        direction: direction,
       });
+
+      if (error) {
+        console.error('Swipe insertion error:', error);
+        throw error;
+      }
+
+    } catch (error) {
+      console.error('Swipe handling failed:', error);
     }
   };
 
@@ -96,7 +140,7 @@ export default function Home() {
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] p-4">
       <animated.div
         style={{ x, rotate }}
-        className="card w-full max-w-md relative"
+        className="card w-full max-w-md relative bg-white dark:bg-gray-800 shadow-lg rounded-xl"
       >
         <img
           src={currentProfile.avatar_url || `https://source.unsplash.com/800x600/?developer,programming&${currentProfile.id}`}
@@ -110,6 +154,35 @@ export default function Home() {
           <p className="text-gray-600 dark:text-gray-400 mt-2">
             {currentProfile.bio}
           </p>
+
+          {/* Links Section */}
+          <div className="mt-4 space-y-2">
+            {currentProfile.github_url && (
+              <a
+                href={currentProfile.github_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                <Github className="w-5 h-5" />
+                GitHub Profile
+              </a>
+            )}
+            
+            {currentProfile.portfolio_url && (
+              <a
+                href={currentProfile.portfolio_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                <Link className="w-5 h-5" />
+                Portfolio Website
+              </a>
+            )}
+          </div>
+
+          {/* Skills Section */}
           <div className="mt-4">
             <h3 className="font-semibold text-gray-900 dark:text-white">Skills</h3>
             <div className="flex flex-wrap gap-2 mt-2">

@@ -4,12 +4,13 @@ import { MessageSquare, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { User, Match } from '../types';
 
-interface MatchWithProfile extends Match {
-  matched_user: User;
+interface MatchWithUsers extends Match {
+  user1_profile: User;
+  user2_profile: User;
 }
 
 export default function Matches() {
-  const [matches, setMatches] = useState<MatchWithProfile[]>([]);
+  const [matches, setMatches] = useState<MatchWithUsers[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -25,18 +26,33 @@ export default function Matches() {
         .from('matches')
         .select(`
           *,
-          matched_user:profiles!matches_user2_id_fkey(*)
+          user1_profile:profiles!user1_id(*),
+          user2_profile:profiles!user2_id(*)
         `)
-        .or(`user1_id.eq.${session.session.user.id},user2_id.eq.${session.session.user.id}`)
-        .eq('status', 'accepted');
+        .or(`user1_id.eq.${session.session.user.id},user2_id.eq.${session.session.user.id})`)
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setMatches(matchesData as MatchWithProfile[]);
+
+      const processedMatches = matchesData.map(match => ({
+        ...match,
+        // Determine which user is the match partner
+        matched_user: match.user1_id === session.session?.user.id 
+          ? match.user2_profile 
+          : match.user1_profile
+      }));
+
+      setMatches(processedMatches as MatchWithUsers[]);
     } catch (error) {
       console.error('Error loading matches:', error);
     } finally {
       setLoading(false);
     }
+  };
+
+  // Add match expiration status
+  const isMatchActive = (match: Match) => {
+    return new Date(match.expires_at) > new Date();
   };
 
   if (loading) {
@@ -61,7 +77,12 @@ export default function Matches() {
       <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Your Matches</h1>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {matches.map((match) => (
-          <div key={match.id} className="card">
+          <div key={match.id} className="card relative">
+            {!isMatchActive(match) && (
+              <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-xl">
+                <span className="text-white font-bold">Expired</span>
+              </div>
+            )}
             <img
               src={match.matched_user.avatar_url || `https://source.unsplash.com/300x300/?developer&${match.matched_user.id}`}
               alt={match.matched_user.full_name}
@@ -70,7 +91,16 @@ export default function Matches() {
             <div className="p-4">
               <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
                 {match.matched_user.full_name}
+                {match.initiator_id === match.matched_user.id && (
+                  <span className="ml-2 text-sm text-primary-600">★</span>
+                )}
               </h3>
+              <div className="flex items-center text-sm text-gray-500 dark:text-gray-400 mb-2">
+                <span>Match expires: </span>
+                <span className="ml-1">
+                  {new Date(match.expires_at).toLocaleDateString()}
+                </span>
+              </div>
               <p className="text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">
                 {match.matched_user.bio}
               </p>
@@ -89,7 +119,7 @@ export default function Matches() {
                 className="btn btn-primary w-full mt-4 flex items-center justify-center gap-2"
               >
                 <MessageSquare className="w-5 h-5" />
-                Chat
+                {isMatchActive(match) ? 'Chat' : 'View History'}
               </Link>
             </div>
           </div>
