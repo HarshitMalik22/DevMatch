@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSpring, animated } from '@react-spring/web';
-import { Code2, X, Check, Loader2, Github, Link } from 'lucide-react';
+import { Code2, X, Check, Loader2, Github, Link, Heart } from 'lucide-react';
+import Confetti from 'react-confetti';
 import { supabase } from '../lib/supabase';
 import type { User } from '../types';
 
 export default function Home() {
   const [currentProfile, setCurrentProfile] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showMatch, setShowMatch] = useState(false);
+  const [matchedUser, setMatchedUser] = useState<User | null>(null);
   const navigate = useNavigate();
 
   const [{ x, rotate }, api] = useSpring(() => ({
@@ -22,7 +25,7 @@ export default function Home() {
       api.start({
         x: 0,
         rotate: 0,
-        immediate: true // Instant reset for new profile
+        immediate: true
       });
     }
   }, [currentProfile]);
@@ -78,10 +81,9 @@ export default function Home() {
   const handleSwipe = async (direction: 'left' | 'right') => {
     if (!currentProfile) return;
 
-    // Animate card offscreen first
     await api.start({
       x: direction === 'left' ? -400 : 400,
-      rotate: direction === 'left' ? -20 : 20
+      rotate: direction === 'left' ? -20 : 20,
     });
 
     try {
@@ -97,15 +99,62 @@ export default function Home() {
 
       if (error) throw error;
 
-      // Load next profile after animation completes
-      loadNextProfile();
+      // Check for mutual right swipe
+      if (direction === 'right') {
+        const { data: mutualSwipe } = await supabase
+          .from('swipes')
+          .select('*')
+          .eq('swiper_id', currentProfile.id)
+          .eq('target_id', session.session.user.id)
+          .eq('direction', 'right')
+          .single();
 
+        if (mutualSwipe) {
+          // Create match
+          const { data: match } = await supabase
+            .from('matches')
+            .insert({
+              user1_id: session.session.user.id,
+              user2_id: currentProfile.id,
+              expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            })
+            .select()
+            .single();
+
+          if (match) {
+            setMatchedUser(currentProfile);
+            setShowMatch(true);
+            
+            // Redirect after animation
+            setTimeout(() => {
+              setShowMatch(false);
+              navigate(`/chat/${match.id}`);
+            }, 3000);
+          }
+        }
+      }
+
+      loadNextProfile();
     } catch (error) {
       console.error('Error handling swipe:', error);
-      // Reset position if error occurs
       api.start({ x: 0, rotate: 0 });
     }
   };
+
+  const MatchAnimation = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <Confetti recycle={false} numberOfPieces={400} />
+      <div className="bg-white dark:bg-gray-800 p-8 rounded-xl text-center animate-pulse">
+        <Heart className="w-16 h-16 text-red-500 mx-auto mb-4" fill="red" />
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+          It's a match!
+        </h2>
+        <p className="text-gray-600 dark:text-gray-400">
+          You matched with {matchedUser?.full_name}!
+        </p>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -127,6 +176,8 @@ export default function Home() {
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-4rem)] p-4">
+      {showMatch && <MatchAnimation />}
+
       <animated.div
         style={{ x, rotate }}
         className="card w-full max-w-md relative bg-white dark:bg-gray-800 shadow-lg rounded-xl"
@@ -144,7 +195,6 @@ export default function Home() {
             {currentProfile.bio}
           </p>
 
-          {/* Links Section */}
           <div className="mt-4 space-y-2">
             {currentProfile.github_url && (
               <a
@@ -171,7 +221,6 @@ export default function Home() {
             )}
           </div>
 
-          {/* Skills Section */}
           <div className="mt-4">
             <h3 className="font-semibold text-gray-900 dark:text-white">Skills</h3>
             <div className="flex flex-wrap gap-2 mt-2">
