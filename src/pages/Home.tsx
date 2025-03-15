@@ -13,7 +13,19 @@ export default function Home() {
   const [{ x, rotate }, api] = useSpring(() => ({
     x: 0,
     rotate: 0,
+    config: { tension: 300, friction: 30 }
   }));
+
+  // Reset card position when new profile loads
+  useEffect(() => {
+    if (currentProfile) {
+      api.start({
+        x: 0,
+        rotate: 0,
+        immediate: true // Instant reset for new profile
+      });
+    }
+  }, [currentProfile]);
 
   useEffect(() => {
     loadNextProfile();
@@ -29,55 +41,30 @@ export default function Home() {
         return;
       }
 
-      // Check if swipes table exists
-      const { error: tableError } = await supabase
-        .from('swipes')
-        .select('*')
-        .limit(1);
-
-      if (tableError) {
-        console.error('Swipes table error:', tableError);
-        throw new Error('Database configuration missing - contact support');
-      }
-
-      // Get swipes with error handling
       const { data: swipes, error: swipesError } = await supabase
         .from('swipes')
         .select('target_id')
         .eq('swiper_id', session.session.user.id);
 
-      if (swipesError) {
-        console.error('Swipes query error:', swipesError);
-        throw swipesError;
-      }
+      if (swipesError) throw swipesError;
 
       const excludedIds = [
         session.session.user.id,
         ...(swipes?.map(s => s.target_id) || [])
       ];
 
-      // Explicitly select required fields
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select(`
-          id,
-          full_name,
-          avatar_url,
-          bio,
-          skills,
-          github_url,
-          portfolio_url,
-          experience_level
+          id, full_name, avatar_url, bio, skills, 
+          github_url, portfolio_url, experience_level
         `)
         .not('id', 'in', `(${excludedIds.join(',')})`)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (profileError) {
-        console.error('Profile query error:', profileError);
-        throw profileError;
-      }
+      if (profileError) throw profileError;
       
       setCurrentProfile(profile || null);
     } catch (error) {
@@ -91,30 +78,32 @@ export default function Home() {
   const handleSwipe = async (direction: 'left' | 'right') => {
     if (!currentProfile) return;
 
-    api.start({
+    // Animate card offscreen first
+    await api.start({
       x: direction === 'left' ? -400 : 400,
-      rotate: direction === 'left' ? -20 : 20,
-      onRest: loadNextProfile,
+      rotate: direction === 'left' ? -20 : 20
     });
 
     try {
       const { data: session } = await supabase.auth.getSession();
       if (!session?.session?.user) return;
 
-      // Insert swipe with error handling
+      // Record swipe
       const { error } = await supabase.from('swipes').insert({
         swiper_id: session.session.user.id,
         target_id: currentProfile.id,
         direction: direction,
       });
 
-      if (error) {
-        console.error('Swipe insertion error:', error);
-        throw error;
-      }
+      if (error) throw error;
+
+      // Load next profile after animation completes
+      loadNextProfile();
 
     } catch (error) {
-      console.error('Swipe handling failed:', error);
+      console.error('Error handling swipe:', error);
+      // Reset position if error occurs
+      api.start({ x: 0, rotate: 0 });
     }
   };
 

@@ -29,14 +29,13 @@ export default function Matches() {
           user1_profile:profiles!user1_id(*),
           user2_profile:profiles!user2_id(*)
         `)
-        .or(`user1_id.eq.${session.session.user.id},user2_id.eq.${session.session.user.id})`)
+        .or(`user1_id.eq.${session.session.user.id},user2_id.eq.${session.session.user.id}`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
       const processedMatches = matchesData.map(match => ({
         ...match,
-        // Determine which user is the match partner
         matched_user: match.user1_id === session.session?.user.id 
           ? match.user2_profile 
           : match.user1_profile
@@ -50,7 +49,6 @@ export default function Matches() {
     }
   };
 
-  // Add match expiration status
   const isMatchActive = (match: Match) => {
     return new Date(match.expires_at) > new Date();
   };
