@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSpring, animated } from '@react-spring/web';
 import { Code2, X, Check, Loader2 } from 'lucide-react';
@@ -14,7 +14,7 @@ export default function Home() {
   const [requiredSkills, setRequiredSkills] = useState<string[]>([]);
   const navigate = useNavigate();
 
-  const [{ x, rotate }, api] = useSpring(() => ({
+  const [{ x, rotate }] = useSpring(() => ({
     x: 0,
     rotate: 0,
     config: { tension: 200, friction: 20 }
@@ -22,116 +22,98 @@ export default function Home() {
 
   useEffect(() => {
     loadNextProfile();
-    subscribeToMatches();
+    const subscription = subscribeToNewConnections();
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [requiredSkills]);
 
-  const subscribeToMatches = () => {
-    const subscription = supabase
+  const subscribeToNewConnections = () => {
+    return supabase
       .channel('matches')
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'matches',
       }, async (payload) => {
-        const match = payload.new as any;
-        const { data: session } = await supabase.auth.getSession();
+        const match = payload.new;
+        const { data: { user } } = await supabase.auth.getUser();
         
-        if (session?.session?.user && match.user2_id === session.session.user.id) {
-          const { data: matchedUser } = await supabase
+        // Only notify if the current user is the receiver of the match
+        if (user?.id && match.user2_id === user.id) {
+          const otherUserId = match.user1_id;
+          const { data: connectedUser } = await supabase
             .from('profiles')
             .select('*')
-            .eq('id', match.user1_id)
+            .eq('id', otherUserId)
             .single();
 
-          if (matchedUser) {
-            toast.success(`New match with ${matchedUser.full_name}!`, {
-              duration: 5000,
-              onClick: () => navigate(`/chat/${match.id}`)
+          if (connectedUser) {
+            toast.success(`${connectedUser.full_name} connected with you!`, {
+              duration: 5000
             });
+
+            navigate(`/chat/${match.id}`);
           }
         }
       })
       .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-    };
   };
 
   const loadNextProfile = async () => {
     try {
       setLoading(true);
-      const { data: session } = await supabase.auth.getSession();
-      if (!session?.session?.user) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
         navigate('/auth');
         return;
       }
 
-      // Get all matches and swipes for the current user
-      const [{ data: matches }, { data: swipes }] = await Promise.all([
-        supabase
-          .from('matches')
-          .select('user1_id, user2_id')
-          .or(`user1_id.eq.${session.session.user.id},user2_id.eq.${session.session.user.id}`),
-        supabase
-          .from('swipes')
-          .select('target_id')
-          .eq('swiper_id', session.session.user.id)
-      ]);
+      // Get IDs of profiles the user has already swiped on
+      const { data: swipes } = await supabase
+        .from('swipes')
+        .select('target_id')
+        .eq('swiper_id', user.id);
 
-      // Combine matched and swiped user IDs
-      const excludedUserIds = new Set<string>();
+      // Get IDs of users who have already created matches with the current user
+      const { data: matches } = await supabase
+        .from('matches')
+        .select('user1_id, user2_id')
+        .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`);
+
+      const excludedIds = new Set<string>([user.id]);
       
-      // Add matched users
-      (matches || []).forEach(match => {
-        if (match.user1_id === session.session.user.id) {
-          excludedUserIds.add(match.user2_id);
+      matches?.forEach(match => {
+        // If user is user1, exclude user2 and vice versa
+        if (match.user1_id === user.id) {
+          excludedIds.add(match.user2_id);
         } else {
-          excludedUserIds.add(match.user1_id);
+          excludedIds.add(match.user1_id);
         }
       });
 
-      // Add swiped users
-      (swipes || []).forEach(swipe => {
-        excludedUserIds.add(swipe.target_id);
-      });
+      swipes?.forEach(swipe => excludedIds.add(swipe.target_id));
 
-      // Add current user
-      excludedUserIds.add(session.session.user.id);
-
-      // Convert Set to Array
-      const excludedIds = Array.from(excludedUserIds);
-
-      // Build the query
-      let query = supabase
+      const query = supabase
         .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      // Add the not-in filter only if there are excluded users
-      if (excludedIds.length > 0) {
-        query = query.not('id', 'in', `(${excludedIds.join(',')})`);
-      }
-
-      // Add skills filter if required skills are set
-      if (requiredSkills.length > 0) {
-        // Use containment operator @> to check if skills array contains all required skills
-        query = query.contains('skills', requiredSkills);
-      }
-
-      // Get a single profile
-      const { data: profile, error } = await query.limit(1).single();
+        .select('*');
       
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // No more profiles to show
-          setCurrentProfile(null);
-        } else {
-          throw error;
-        }
-      } else {
-        setCurrentProfile(profile);
+      // Only add the "not in" clause if we have IDs to exclude
+      if (excludedIds.size > 0) {
+        const excludedIdsArray = Array.from(excludedIds);
+        query.not('id', 'in', `(${excludedIdsArray.join(',')})`);
       }
+
+      query.order('created_at', { ascending: false });
+
+      if (requiredSkills.length > 0) {
+        query.contains('skills', requiredSkills);
+      }
+
+      const { data, error } = await query.limit(1).maybeSingle();
+
+      if (error) throw error;
+      setCurrentProfile(data);
     } catch (error) {
       console.error('Error loading profile:', error);
       toast.error('Failed to load next profile');
@@ -142,76 +124,51 @@ export default function Home() {
 
   const handleSwipe = async (direction: 'left' | 'right') => {
     if (!currentProfile || swiping) return;
-
+  
     setSwiping(true);
-    api.start({
-      x: direction === 'left' ? -400 : 400,
-      rotate: direction === 'left' ? -20 : 20,
-      onRest: () => {
-        setSwiping(false);
-        loadNextProfile();
-        api.start({ x: 0, rotate: 0, immediate: true });
-      },
-    });
-
+  
     try {
-      const { data: session } = await supabase.auth.getSession();
-      if (!session?.session?.user) return;
-
-      // Record the swipe
-      await supabase
-        .from('swipes')
-        .insert({
-          swiper_id: session.session.user.id,
-          target_id: currentProfile.id,
-          direction
-        });
-
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+  
+      // Record swipe
+      await supabase.from('swipes').insert({
+        swiper_id: user.id,
+        target_id: currentProfile.id,
+        direction
+      });
+  
+      // For right swipes, create a match immediately and navigate to chat
       if (direction === 'right') {
-        // Check if there's already a match from the other user
-        const { data: matches } = await supabase
+        // Create a match with 'initiated' status
+        const { data: newMatch, error: matchError } = await supabase
           .from('matches')
-          .select('id, status')
-          .eq('user1_id', currentProfile.id)
-          .eq('user2_id', session.session.user.id)
-          .eq('status', 'pending');
-
-        const existingMatch = matches?.[0];
-
-        if (existingMatch) {
-          // Update both matches to 'accepted'
-          await Promise.all([
-            supabase
-              .from('matches')
-              .update({ status: 'accepted' })
-              .eq('id', existingMatch.id),
-            supabase
-              .from('matches')
-              .insert({
-                user1_id: session.session.user.id,
-                user2_id: currentProfile.id,
-                status: 'accepted'
-              })
-          ]);
-
-          toast.success(`It's a match with ${currentProfile.full_name}!`, {
-            duration: 5000,
-            onClick: () => navigate(`/chat/${existingMatch.id}`)
-          });
-        } else {
-          // Create a new pending match
-          await supabase
-            .from('matches')
-            .insert({
-              user1_id: session.session.user.id,
-              user2_id: currentProfile.id,
-              status: 'pending'
-            });
+          .insert({
+            user1_id: user.id,
+            user2_id: currentProfile.id,
+            status: 'initiated'
+          })
+          .select()
+          .single();
+  
+        if (matchError) throw matchError;
+  
+        // Navigate to chat with the new match
+        if (newMatch) {
+          toast.success(`You connected with ${currentProfile.full_name}!`);
+          navigate(`/chat/${newMatch.id}`);
+          return;
         }
       }
+  
+      // Only load next profile if we didn't navigate away
+      loadNextProfile();
     } catch (error) {
       console.error('Error handling swipe:', error);
       toast.error('Failed to process swipe');
+      loadNextProfile();
+    } finally {
+      setSwiping(false);
     }
   };
 
@@ -245,7 +202,7 @@ export default function Home() {
           <p className="text-gray-600 dark:text-gray-400">
             {requiredSkills.length > 0
               ? "No profiles match your skill requirements. Try adjusting your criteria!"
-              : "Check back later for more potential matches!"}
+              : "Check back later for more potential hackathon partners!"}
           </p>
         </div>
       ) : (
