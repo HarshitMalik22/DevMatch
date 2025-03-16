@@ -38,20 +38,14 @@ export default function Profile() {
         return;
       }
 
-      const { data: profiles, error } = await supabase
+      const { data: profile } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', session.session.user.id);
+        .eq('id', session.session.user.id)
+        .single();
 
-      if (error) throw error;
-
-      if (profiles && profiles.length === 1) {
-        setProfile(profiles[0]);
-      } else if (profiles && profiles.length > 1) {
-        throw new Error('Multiple profiles found for the user.');
-      } else {
-        // Handle case where no profile is found
-        toast.error('No profile found for the user.');
+      if (profile) {
+        setProfile(profile);
       }
     } catch (error) {
       console.error('Error loading profile:', error);

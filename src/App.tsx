@@ -3,12 +3,11 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useThemeStore } from './store/themeStore';
 import Navbar from './components/Navbar';
-import Home from './pages/Home';
-import Auth from './pages/Auth';
-import Profile from './pages/Profile';
-import Matches from './pages/Matches';
-import Chat from './pages/Chat';
-import Logout from './pages/logout'; // Import the Logout component
+import Home from './pages/Home.tsx';
+import Auth from './pages/Auth.tsx';
+import Profile from './pages/Profile.tsx';
+import Matches from './pages/Matches.tsx';
+import Chat from './pages/Chat.tsx';
 
 function App() {
   const isDarkMode = useThemeStore((state) => state.isDarkMode);
@@ -24,7 +23,6 @@ function App() {
             <Route path="/profile" element={<Profile />} />
             <Route path="/matches" element={<Matches />} />
             <Route path="/chat/:matchId" element={<Chat />} />
-            <Route path="/logout" element={<Logout />} /> {/* Add the Logout route */}
           </Routes>
         </main>
       </Router>

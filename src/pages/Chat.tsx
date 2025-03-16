@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Send, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import toast from 'react-hot-toast';
 import type { Message, User } from '../types';
 
 interface ChatMessage extends Message {
@@ -13,9 +14,12 @@ export default function Chat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [matchedUser, setMatchedUser] = useState<User | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
+    loadMatchDetails();
     loadMessages();
     const subscription = supabase
       .channel('messages')
@@ -35,6 +39,40 @@ export default function Chat() {
     };
   }, [matchId]);
 
+  const loadMatchDetails = async () => {
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (!session?.session?.user) {
+        navigate('/auth');
+        return;
+      }
+
+      const { data: match } = await supabase
+        .from('matches')
+        .select(`
+          *,
+          user1:profiles!matches_user1_id_fkey(*),
+          user2:profiles!matches_user2_id_fkey(*)
+        `)
+        .eq('id', matchId)
+        .single();
+
+      if (!match) {
+        toast.error('Match not found');
+        navigate('/matches');
+        return;
+      }
+
+      // Set the matched user based on which user is viewing
+      const otherUser = match.user1.id === session.session.user.id ? match.user2 : match.user1;
+      setMatchedUser(otherUser);
+    } catch (error) {
+      console.error('Error loading match details:', error);
+      toast.error('Failed to load match details');
+      navigate('/matches');
+    }
+  };
+
   const loadMessages = async () => {
     try {
       const { data, error } = await supabase
@@ -50,6 +88,7 @@ export default function Chat() {
       setMessages(data as ChatMessage[]);
     } catch (error) {
       console.error('Error loading messages:', error);
+      toast.error('Failed to load messages');
     } finally {
       setLoading(false);
       scrollToBottom();
@@ -66,7 +105,10 @@ export default function Chat() {
       .eq('id', messageId)
       .single();
 
-    if (error) return;
+    if (error) {
+      console.error('Error loading message:', error);
+      return;
+    }
     setMessages((prev) => [...prev, data as ChatMessage]);
     scrollToBottom();
   };
@@ -81,7 +123,10 @@ export default function Chat() {
 
     try {
       const { data: session } = await supabase.auth.getSession();
-      if (!session?.session?.user) return;
+      if (!session?.session?.user) {
+        navigate('/auth');
+        return;
+      }
 
       const { error } = await supabase.from('messages').insert({
         match_id: matchId,
@@ -93,6 +138,7 @@ export default function Chat() {
       setNewMessage('');
     } catch (error) {
       console.error('Error sending message:', error);
+      toast.error('Failed to send message');
     }
   };
 
@@ -106,6 +152,26 @@ export default function Chat() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
+      {matchedUser && (
+        <div className="bg-white dark:bg-gray-800 border-b dark:border-gray-700 p-4">
+          <div className="max-w-3xl mx-auto flex items-center space-x-4">
+            <img
+              src={matchedUser.avatar_url || `https://source.unsplash.com/100x100/?developer&${matchedUser.id}`}
+              alt={matchedUser.full_name}
+              className="w-10 h-10 rounded-full object-cover"
+            />
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {matchedUser.full_name}
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {matchedUser.experience_level}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-3xl mx-auto space-y-4">
           {messages.map((message) => (
