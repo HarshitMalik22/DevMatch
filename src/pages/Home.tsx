@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSpring, animated } from '@react-spring/web';
 import { Code2, X, Check, Loader2 } from 'lucide-react';
@@ -14,7 +14,7 @@ export default function Home() {
   const [requiredSkills, setRequiredSkills] = useState<string[]>([]);
   const navigate = useNavigate();
 
-  const [{ x, rotate }, api] = useSpring(() => ({
+  const [{ x, rotate }] = useSpring(() => ({
     x: 0,
     rotate: 0,
     config: { tension: 200, friction: 20 }
@@ -50,9 +50,10 @@ export default function Home() {
 
           if (connectedUser) {
             toast.success(`${connectedUser.full_name} connected with you!`, {
-              duration: 5000,
-              onClick: () => navigate(`/chat/${match.id}`)
+              duration: 5000
             });
+
+            navigate(`/chat/${match.id}`);
           }
         }
       })

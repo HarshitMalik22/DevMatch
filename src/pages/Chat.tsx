@@ -22,12 +22,15 @@ export default function Chat() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    console.log('🔍 [useEffect] Validating connection with matchId:', matchId);
     const validateConnection = async () => {
       if (!matchId || !isValidUUID(matchId)) {
+        console.log('❌ Invalid matchId, redirecting to matches');
         toast.error('Invalid chat ID');
         navigate('/matches');
         return;
       }
+      console.log('✅ matchId is valid');
       setValidatingConnection(false);
     };
 
@@ -35,8 +38,10 @@ export default function Chat() {
   }, [matchId, navigate]);
 
   useEffect(() => {
+    console.log('🔍 [useEffect] Getting current user');
     const getCurrentUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
+      console.log('👤 Auth user data:', user);
       if (user) {
         // Get full profile info
         const { data: profile } = await supabase
@@ -45,7 +50,10 @@ export default function Chat() {
           .eq('id', user.id)
           .single();
           
+        console.log('👤 Profile data:', profile);
         setCurrentUser(profile || user);
+      } else {
+        console.log('❌ No authenticated user found');
       }
     };
 
@@ -53,19 +61,26 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    if (!matchId || validatingConnection) return;
+    if (!matchId || validatingConnection) {
+      console.log('🔍 [useEffect] Skipping data load - matchId or validation pending', { matchId, validatingConnection });
+      return;
+    }
 
+    console.log('🔍 [useEffect] Loading data and setting up subscription for matchId:', matchId);
     const loadData = async () => {
       try {
+        console.log('📥 Loading connection details');
         await loadConnectionDetails();
+        console.log('📥 Loading messages');
         await loadMessages();
       } catch (error) {
-        console.error('Initialization error:', error);
+        console.error('❌ Initialization error:', error);
       }
     };
 
     loadData();
 
+    console.log('🔄 Setting up real-time subscription for new messages');
     const subscription = supabase
       .channel('messages')
       .on('postgres_changes', {
@@ -74,20 +89,24 @@ export default function Chat() {
         table: 'messages',
         filter: `match_id=eq.${matchId}`,
       }, (payload) => {
+        console.log('📩 New message received via subscription:', payload);
         const newMessage = payload.new as Message;
         loadMessage(newMessage.id);
       })
       .subscribe();
 
     return () => {
+      console.log('🧹 Cleaning up subscription');
       subscription.unsubscribe();
     };
   }, [matchId, validatingConnection]);
 
   const loadConnectionDetails = async () => {
     try {
+      console.log('🔍 Loading connection details');
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
+        console.log('❌ No authenticated user, redirecting to auth');
         navigate('/auth');
         return;
       }
@@ -102,21 +121,25 @@ export default function Chat() {
         .eq('id', matchId)
         .single();
 
+      console.log('🔄 Match data:', match, 'Error:', error);
+
       if (error || !match) {
         throw error || new Error('Connection not found');
       }
 
       // Verify user is part of the connection
       if (![match.user1_id, match.user2_id].includes(user.id)) {
+        console.log('❌ User not part of this match, redirecting');
         toast.error('Unauthorized access');
         navigate('/matches');
         return;
       }
 
       const otherUser = match.user1_id === user.id ? match.user2 : match.user1;
+      console.log('👥 Connected with user:', otherUser);
       setConnectedUser(otherUser);
     } catch (error) {
-      console.error('Error loading connection details:', error);
+      console.error('❌ Error loading connection details:', error);
       toast.error('Failed to load connection details');
       navigate('/matches');
     }
@@ -124,6 +147,7 @@ export default function Chat() {
 
   const loadMessages = async () => {
     try {
+      console.log('📥 Loading messages for match:', matchId);
       const { data, error } = await supabase
         .from('messages')
         .select('*, sender:profiles(*)')
@@ -131,9 +155,10 @@ export default function Chat() {
         .order('created_at', { ascending: true });
 
       if (error) throw error;
+      console.log(`📨 Loaded ${data?.length || 0} messages:`, data);
       setMessages(data as ChatMessage[]);
     } catch (error) {
-      console.error('Error loading messages:', error);
+      console.error('❌ Error loading messages:', error);
       toast.error('Failed to load messages');
     } finally {
       setLoading(false);
@@ -143,6 +168,7 @@ export default function Chat() {
 
   const loadMessage = async (messageId: string) => {
     try {
+      console.log('📥 Loading single message with ID:', messageId);
       const { data, error } = await supabase
         .from('messages')
         .select('*, sender:profiles(*)')
@@ -150,21 +176,31 @@ export default function Chat() {
         .single();
 
       if (error) throw error;
+      console.log('📨 Loaded new message:', data);
       setMessages(prev => [...prev, data as ChatMessage]);
       scrollToBottom();
     } catch (error) {
-      console.error('Error loading message:', error);
+      console.error('❌ Error loading message:', error);
     }
   };
 
   const scrollToBottom = () => {
+    console.log('📜 Scrolling to bottom of messages');
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !matchId || !currentUser) return;
+    if (!newMessage.trim() || !matchId || !currentUser) {
+      console.log('❌ Cannot send message - missing data', { 
+        hasMessage: !!newMessage.trim(), 
+        hasMatchId: !!matchId, 
+        hasCurrentUser: !!currentUser 
+      });
+      return;
+    }
 
+    console.log('📤 Sending message:', newMessage.trim());
     try {
       const { error } = await supabase.from('messages').insert({
         match_id: matchId,
@@ -173,14 +209,16 @@ export default function Chat() {
       });
 
       if (error) throw error;
+      console.log('✅ Message sent successfully');
       setNewMessage('');
     } catch (error) {
-      console.error('Error sending message:', error);
+      console.error('❌ Error sending message:', error);
       toast.error('Failed to send message');
     }
   };
 
   if (validatingConnection || loading) {
+    console.log('⏳ Showing loading state', { validatingConnection, loading });
     return (
       <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
         <Loader2 className="w-8 h-8 animate-spin text-primary-600" />

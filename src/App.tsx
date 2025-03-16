@@ -24,7 +24,7 @@ function App() {
               <Route path="/auth" element={<Auth />} />
               <Route path="/profile" element={<Profile />} />
               <Route path="/matches" element={<Matches />} />
-              <Route path="/chat" element={<Chat />} />
+              <Route path="/chat/:matchId" element={<Chat />} />
               <Route path="/ErrorPage" element={<ErrorPage />} />
             </Routes>
           </main>

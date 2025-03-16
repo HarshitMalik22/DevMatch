@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { MessageSquare, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -6,6 +6,7 @@ import type { User, Match } from '../types';
 
 interface MatchWithProfile extends Match {
   matched_user: User;
+  match_type: 'initiated' | 'received';
 }
 
 export default function Matches() {
